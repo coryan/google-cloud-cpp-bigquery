@@ -200,10 +200,8 @@ source "${PROJECT_ROOT}/ci/etc/kokoro/install/version-config.sh"
 export GOOGLE_CLOUD_CPP_COMMON_VERSION
 
 echo "================================================================"
-NCPU=$(nproc)
-export NCPU
+echo "Change working directory to project root $(date)."
 cd "${PROJECT_ROOT}"
-echo "Building with ${NCPU} cores $(date) on ${PWD}."
 
 echo "================================================================"
 echo "Capture Docker version to troubleshoot $(date)."
@@ -215,7 +213,12 @@ echo "Load Google Container Registry configuration parameters $(date)."
 if [[ -f "${KOKORO_GFILE_DIR:-}/gcr-configuration.sh" ]]; then
   source "${KOKORO_GFILE_DIR:-}/gcr-configuration.sh"
 fi
+
 source "${PROJECT_ROOT}/ci/kokoro/docker/define-docker-variables.sh"
+source "${PROJECT_ROOT}/ci/define-dump-log.sh"
+
+echo "================================================================"
+echo "Building with ${NCPU} cores $(date) on ${PWD}."
 
 echo "================================================================"
 echo "Setup Google Container Registry access $(date)."
@@ -245,6 +248,7 @@ docker_build_flags=(
   # upload it.
   "-t" "${IMAGE}:latest"
   "--build-arg" "NCPU=${NCPU}"
+  "--build-arg" "DISTRO_VERSION=${DISTRO_VERSION}"
   "-f" "ci/kokoro/docker/Dockerfile.${DISTRO}"
 )
 
@@ -259,21 +263,28 @@ fi
 
 echo "================================================================"
 echo "Creating Docker image with all the development tools $(date)."
-echo "    docker build ${docker_build_flags[*]} ci"
 echo "Logging to ${BUILD_OUTPUT}/create-build-docker-image.log"
+echo "    docker build " "${docker_build_flags[@]}" ci
 # We do not want to print the log unless there is an error, so disable the -e
 # flag. Later, we will want to print out the emulator(s) logs *only* if there
 # is an error, so disabling from this point on is the right choice.
 set +e
 mkdir -p "${BUILD_OUTPUT}"
 if timeout 3600s docker build "${docker_build_flags[@]}" ci \
-    >"${BUILD_OUTPUT}/create-build-docker-image.log" 2>&1 </dev/null; then
+   >"${BUILD_OUTPUT}/create-build-docker-image.log" 2>&1 </dev/null; then
   update_cache="true"
   echo "Docker image successfully rebuilt"
 else
   echo "Error updating Docker image, using cached image for this build"
   dump_log "${BUILD_OUTPUT}/create-build-docker-image.log"
 fi
+
+echo "================================================================"
+echo "Capture Docker state after build to troubleshoot $(date)."
+sudo docker version
+echo "================================================================"
+docker image ls
+echo "================================================================"
 
 if "${update_cache}" && [[ "${RUNNING_CI:-}" == "yes" ]] &&
    [[ -z "${KOKORO_GITHUB_PULL_REQUEST_NUMBER:-}" ]]; then
@@ -282,6 +293,28 @@ if "${update_cache}" && [[ "${RUNNING_CI:-}" == "yes" ]] &&
   # Do not stop the build on a failure to update the cache.
   docker push "${IMAGE}:latest" || true
 fi
+
+# Because Kokoro checks out the code in `detached HEAD` mode there is no easy
+# way to discover what is the current branch (and Kokoro does not expose the
+# branch as an enviroment variable, like other CI systems do). We use the
+# following trick:
+# - Find out the current commit using git rev-parse HEAD.
+# - Exclude "HEAD detached" branches (they are not really branches).
+# - Choose the branch from the bottom of the list.
+# - Typically this is the branch that was checked out by Kokoro.
+echo "================================================================"
+echo "Detecting the branch name $(date)."
+BRANCH="$(git branch --all --no-color --contains "$(git rev-parse HEAD)" | \
+  grep -v 'HEAD' | tail -1 || exit 0)"
+# Enable extglob if not enabled
+shopt -q extglob || shopt -s extglob
+BRANCH="${BRANCH##*( )}"
+BRANCH="${BRANCH%%*( )}"
+BRANCH="${BRANCH##remotes/origin/}"
+BRANCH="${BRANCH##remotes/upstream/}"
+export BRANCH
+echo "================================================================"
+echo "Detected the branch name: ${BRANCH} $(date)."
 
 # The default user for a Docker container has uid 0 (root). To avoid creating
 # root-owned files in the build directory we tell docker to use the current
