@@ -1,5 +1,13 @@
 # Google BigQuery C++ Client Library
 
+> **NOTICE:** This repo will be merging with the
+[googleapis/google-cloud-cpp](https://github.com/googleapis/google-cloud-cpp)
+monorepo soon; possibly as soon as early April. We expect this new monorepo
+organization to be better for our existing and new customers going forward.
+Please see
+[googleapis/google-cloud-cpp#3612](https://github.com/googleapis/google-cloud-cpp/issues/3612)
+for more details.
+
 This repository contains the implementation of the Google BigQuery C++ client
 library.
 
